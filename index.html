@@ -2,321 +2,482 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>手指書法闖關</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>空中書法練習</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <style>
-        body { margin: 0; background: #e8e4d9; font-family: "標楷體", "DFKai-SB", serif; overflow: hidden; }
-        #container { position: relative; width: 100vw; height: 100vh; }
-        #game-area { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: scaleX(-1); }
-        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-        #input_video { display: none; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #000; font-family: "標楷體", "DFKai-SB", serif; }
+        video { display: none; }
 
-        #ui-layer {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none; z-index: 10;
+        #output_canvas {
+            position: fixed; top: 0; left: 0;
+            width: 100vw; height: 100vh;
         }
-        .hud { position: absolute; top: 20px; width: 100%; text-align: center; color: #3e3a31; }
-        .level-info {
-            font-size: 32px; background: rgba(255,255,255,0.9);
-            padding: 10px 30px; border-radius: 50px; border: 2px solid #8b4513;
+
+        /* HUD 上方 */
+        #hud {
+            position: fixed; top: 0; left: 0; right: 0;
+            padding: 16px 28px;
+            display: flex; align-items: center; justify-content: space-between;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.65), transparent);
+            pointer-events: none; z-index: 20;
         }
+        #hud .title {
+            font-size: 28px; font-weight: bold;
+            color: #ffeb3b;
+            text-shadow: 0 0 12px rgba(0,0,0,0.9), 2px 2px 0 #000;
+        }
+        #hud .info {
+            font-size: 22px; font-weight: bold;
+            color: #ffeb3b;
+            text-shadow: 0 0 12px rgba(0,0,0,0.9), 2px 2px 0 #000;
+            text-align: right;
+        }
+
+        /* 底部狀態列 */
+        #statusBar {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            padding: 12px 28px;
+            display: flex; align-items: center; justify-content: space-between;
+            background: linear-gradient(to top, rgba(0,0,0,0.65), transparent);
+            pointer-events: none; z-index: 20;
+        }
+        #statusBar .hint {
+            font-size: 18px; font-weight: bold;
+            color: #ffeb3b;
+            text-shadow: 2px 2px 0 #000;
+        }
+
+        /* 虛擬按鈕 */
+        .vbtn {
+            position: fixed; z-index: 20;
+            font-family: "標楷體", "DFKai-SB", serif;
+            font-size: 22px; font-weight: bold;
+            color: #fff;
+            padding: 12px 28px;
+            border-radius: 14px;
+            pointer-events: none;
+            text-shadow: 1px 1px 0 #000;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+        }
+        #btnClear { background: rgba(120,60,0,0.85); bottom: 60px; left: 60px; }
+        #btnNext  { background: rgba(160,20,20,0.85); bottom: 60px; right: 60px; }
+
+        /* 進度指示（當前字） */
+        #currentCharBox {
+            position: fixed; bottom: 60px; left: 50%;
+            transform: translateX(-50%);
+            font-size: 18px; font-weight: bold;
+            color: #ffeb3b;
+            text-shadow: 2px 2px 0 #000;
+            pointer-events: none; z-index: 20;
+            text-align: center;
+        }
+
+        /* 蓋章動畫 */
         #stamp {
-            position: absolute; width: 120px; height: 120px;
-            border: 4px solid #b22222; color: #b22222;
-            font-size: 40px; display: flex; align-items: center; justify-content: center;
-            font-weight: bold; opacity: 0;
-            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            right: 10%; bottom: 20%; transform: rotate(-15deg) scale(2);
-        }
-        #stamp.active { opacity: 0.8; transform: rotate(-15deg) scale(1); }
-
-        #loading-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(232,228,217,0.97); z-index: 200;
-            display: flex; flex-direction: column;
-            align-items: center; justify-content: center; gap: 16px;
-            font-size: 22px; color: #5a4a3a;
-        }
-        #loading-overlay.hidden { display: none; }
-        #loading-msg { font-size: 16px; color: #8b6a4a; }
-        .spinner {
-            width: 50px; height: 50px;
-            border: 5px solid #d4b896; border-top-color: #8b4513;
-            border-radius: 50%; animation: spin 0.8s linear infinite;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-
-        #cam-preview {
-            position: fixed; bottom: 20px; right: 20px;
-            width: 200px; height: 150px;
-            border: 3px solid #8b4513; border-radius: 12px;
-            overflow: hidden; z-index: 100; background: #111;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-        }
-        #preview_video {
-            display: block; width: 100%; height: 100%;
-            object-fit: cover; transform: scaleX(-1);
-        }
-        #cam-label {
-            position: absolute; top: 5px; left: 8px;
-            font-size: 12px; color: rgba(255,255,255,0.85);
-            text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+            position: fixed; right: 10%; bottom: 20%;
+            width: 130px; height: 130px;
+            border: 5px solid #b22222; border-radius: 8px;
+            color: #b22222; font-size: 44px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold; opacity: 0; z-index: 30;
+            transition: all 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transform: rotate(-15deg) scale(2);
             pointer-events: none;
         }
-        #hand-indicator {
-            position: absolute; bottom: 5px; left: 0; width: 100%;
-            text-align: center; font-size: 13px;
-            text-shadow: 0 1px 3px rgba(0,0,0,0.9);
-            transition: color 0.2s; color: #ffb347;
+        #stamp.active { opacity: 0.85; transform: rotate(-15deg) scale(1); }
+
+        /* 載入遮罩 */
+        #loading {
+            position: fixed; inset: 0; background: rgba(10,5,0,0.96);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center; gap: 20px;
+            z-index: 100;
         }
+        #loading.hidden { display: none; }
+        #loading .ltitle {
+            font-size: 36px; font-weight: bold; color: #ffeb3b;
+            text-shadow: 0 0 20px #ff8800;
+        }
+        #loading .lmsg { font-size: 18px; color: #ccc; }
+        .spinner {
+            width: 56px; height: 56px;
+            border: 6px solid #442200;
+            border-top-color: #ffeb3b;
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
 
-<div id="loading-overlay">
+<!-- 載入遮罩 -->
+<div id="loading">
     <div class="spinner"></div>
-    <div>空中書法闖關・宗師版</div>
-    <div id="loading-msg">正在啟動攝影機與手勢辨識⋯⋯</div>
+    <div class="ltitle">空中書法練習</div>
+    <div class="lmsg" id="loadMsg">正在啟動攝影機與手勢辨識⋯⋯</div>
 </div>
 
-<div id="container">
-    <div id="game-area">
-        <video id="input_video" playsinline></video>
-        <canvas id="bg_canvas"></canvas>
-        <canvas id="draw_canvas"></canvas>
-    </div>
-    <div id="ui-layer">
-        <div class="hud">
-            <span class="level-info">第 <span id="levelNum">1</span> 關：<span id="poemTitle">載入中</span></span>
-        </div>
-        <div id="stamp">御筆</div>
+<!-- HUD -->
+<div id="hud">
+    <div class="title">空中書法練習</div>
+    <div class="info">
+        第 <span id="levelNum">1</span> 關：<span id="poemTitle">—</span><br>
+        <span style="font-size:18px;">得分 <span id="scoreVal">0</span></span>
     </div>
 </div>
 
-<div id="cam-preview">
-    <video id="preview_video" autoplay playsinline muted></video>
-    <span id="cam-label">📷 你的畫面</span>
-    <div id="hand-indicator">✋ 未偵測到手</div>
+<!-- 底部狀態 -->
+<div id="statusBar">
+    <div class="hint" id="statusHint">✋ 請將手放入畫面</div>
+    <div class="hint">食指伸直書寫・握拳停筆</div>
 </div>
+
+<!-- 虛擬按鈕（顯示用，實際碰撞在 canvas 偵測） -->
+<div class="vbtn" id="btnClear">🗑 清空</div>
+<div class="vbtn" id="btnNext">✅ 下一關</div>
+<div id="currentCharBox"></div>
+
+<!-- 蓋章 -->
+<div id="stamp">御筆</div>
+
+<video id="input_video" playsinline></video>
+<canvas id="output_canvas"></canvas>
 
 <script>
+// ═══════════════════════════════════════
+// 詩詞資料
+// ═══════════════════════════════════════
 const poems = [
-  { title: "鹿柴",     content: ["空山不見人","但聞人語響","返景入深林","復照青苔上"] },
-  { title: "竹里館",   content: ["獨坐幽篁裡","彈琴復長嘯","深林人不知","明月來相照"] },
-  { title: "送別",     content: ["山中相送罷","日暮掩柴扉","春草明年綠","王孫歸不歸"] },
-  { title: "相思",     content: ["紅豆生南國","春來發幾枝","願君多采擷","此物最相思"] },
-  { title: "雜詩",     content: ["君自故鄉來","應知故鄉事","來日綺窗前","寒梅著花未"] },
-  { title: "春曉",     content: ["春眠不覺曉","處處聞啼鳥","夜來風雨聲","花落知多少"] },
-  { title: "夜思",     content: ["床前明月光","疑是地上霜","舉頭望明月","低頭思故鄉"] },
-  { title: "登鸛雀樓", content: ["白日依山盡","黃河入海流","欲窮千里目","更上一層樓"] },
-  { title: "江雪",     content: ["千山鳥飛絕","萬徑人蹤滅","孤舟簑笠翁","獨釣寒江雪"] },
-  { title: "登樂遊原", content: ["向晚意不適","驅車登古原","夕陽無限好","只是近黃昏"] },
-  { title: "尋隱者不遇",content:["松下問童子","言師採藥去","只在此山中","雲深不知處"] },
-  { title: "回鄉偶書", content: ["少小離家老大回","鄉音無改鬢毛摧","兒童相見不相識","笑問客從何處來"] },
-  { title: "九月九日憶山東兄弟", content: ["獨在異鄉為異客","每逢佳節倍思親","遙知兄弟登高處","遍插茱萸少一人"] },
-  { title: "渭城曲",   content: ["渭城朝雨浥輕塵","客舍青青柳色新","勸君更盡一杯酒","西出陽關無故人"] },
-  { title: "出塞",     content: ["秦時明月漢時關","萬里長征人未還","但使龍城飛將在","不教胡馬渡陰山"] },
-  { title: "涼州詞",   content: ["葡萄美酒夜光杯","欲飲琵琶馬上催","醉臥沙場君莫笑","古來征戰幾人回"] },
-  { title: "楓橋夜泊", content: ["月落烏啼霜滿天","江楓漁火對愁眠","姑蘇城外寒山寺","夜半鐘聲到客船"] },
-  { title: "泊秦淮",   content: ["煙籠寒水月籠沙","夜泊秦淮近酒家","商女不知亡國恨","隔江猶唱後庭花"] },
-  { title: "夜雨寄北", content: ["君問歸期未有期","巴山夜雨漲秋池","何當共剪西窗燭","卻話巴山夜雨時"] },
-  { title: "金縷衣",   content: ["勸君莫惜金縷衣","勸君惜取少年時","花開堪折直須折","莫待無花空折枝"] },
-  { title: "登幽州臺歌",content:["前不見古人","後不見來者","念天地之悠悠","獨愴然而涕下"] },
-  { title: "春望",     content: ["國破山河在","城春草木深","感時花濺淚","恨別鳥驚心","烽火連三月","家書抵萬金","白頭搔更短","渾欲不勝簪"] },
-  { title: "登高",     content: ["風急天高猿嘯哀","渚清沙白鳥飛迴","無邊落木蕭蕭下","不盡長江滾滾來","萬里悲秋常作客","百年多病獨登臺","艱難苦恨繁霜鬢","潦倒新停濁酒杯"] },
-  { title: "黃鶴樓",   content: ["昔人已乘黃鶴去","此地空餘黃鶴樓","黃鶴一去不復返","白雲千載空悠悠","晴川歷歷漢陽樹","芳草萋萋鸚鵡洲","日暮鄉關何處是","煙波江上使人愁"] },
-  { title: "蜀相",     content: ["丞相祠堂何處尋","錦官城外柏森森","映階碧草自春色","隔葉黃鸝空好音","三顧頻煩天下計","兩朝開濟老臣心","出師未捷身先死","長使英雄淚滿襟"] },
-  { title: "山居秋暝", content: ["空山新雨後","天氣晚來秋","明月松間照","清泉石上流","竹喧歸浣女","蓮動下漁舟","隨意春芳歇","王孫自可留"] },
-  { title: "無題",     content: ["相見時難別亦難","東風無力百花殘","春蠶到死絲方盡","蠟炬成灰淚始乾","曉鏡但愁雲鬢改","夜吟應覺月光寒","蓬萊此去無多路","青鳥殷勤為探看"] },
+  { title: "鹿柴",     lines: ["空山不見人", "但聞人語響", "返景入深林", "復照青苔上"] },
+  { title: "竹里館",   lines: ["獨坐幽篁裡", "彈琴復長嘯", "深林人不知", "明月來相照"] },
+  { title: "相思",     lines: ["紅豆生南國", "春來發幾枝", "願君多采擷", "此物最相思"] },
+  { title: "春曉",     lines: ["春眠不覺曉", "處處聞啼鳥", "夜來風雨聲", "花落知多少"] },
+  { title: "夜思",     lines: ["床前明月光", "疑是地上霜", "舉頭望明月", "低頭思故鄉"] },
+  { title: "登鸛雀樓", lines: ["白日依山盡", "黃河入海流", "欲窮千里目", "更上一層樓"] },
+  { title: "江雪",     lines: ["千山鳥飛絕", "萬徑人蹤滅", "孤舟簑笠翁", "獨釣寒江雪"] },
+  { title: "出塞",     lines: ["秦時明月漢時關", "萬里長征人未還", "但使龍城飛將在", "不教胡馬渡陰山"] },
+  { title: "楓橋夜泊", lines: ["月落烏啼霜滿天", "江楓漁火對愁眠", "姑蘇城外寒山寺", "夜半鐘聲到客船"] },
+  { title: "春望",     lines: ["國破山河在", "城春草木深", "感時花濺淚", "恨別鳥驚心", "烽火連三月", "家書抵萬金"] },
+  { title: "登高",     lines: ["風急天高猿嘯哀", "渚清沙白鳥飛迴", "無邊落木蕭蕭下", "不盡長江滾滾來"] },
+  { title: "山居秋暝", lines: ["空山新雨後", "天氣晚來秋", "明月松間照", "清泉石上流"] },
 ];
 
-let currentLevel = parseInt(localStorage.getItem('calligraphyLevel')) || 0;
+// ═══════════════════════════════════════
+// DOM & 狀態
+// ═══════════════════════════════════════
+const videoEl    = document.getElementById('input_video');
+const canvas     = document.getElementById('output_canvas');
+const ctx        = canvas.getContext('2d');
+const scoreEl    = document.getElementById('scoreVal');
+const levelNumEl = document.getElementById('levelNum');
+const poemTitleEl= document.getElementById('poemTitle');
+const statusEl   = document.getElementById('statusHint');
+const loadingEl  = document.getElementById('loading');
+const loadMsgEl  = document.getElementById('loadMsg');
+const stampEl    = document.getElementById('stamp');
+const curCharEl  = document.getElementById('currentCharBox');
 
-const bgCanvas   = document.getElementById('bg_canvas');
-const drawCanvas = document.getElementById('draw_canvas');
-const bgCtx      = bgCanvas.getContext('2d');
-const drawCtx    = drawCanvas.getContext('2d');
-const stamp      = document.getElementById('stamp');
-const loadingOverlay = document.getElementById('loading-overlay');
-const loadingMsg     = document.getElementById('loading-msg');
-const indicator      = document.getElementById('hand-indicator');
-
-let lastX = 0, lastY = 0, isDrawing = false;
-let nextDebounce = false;
+let level   = parseInt(localStorage.getItem('airCalliLevel')) || 0;
+let score   = parseInt(localStorage.getItem('airCalliScore')) || 0;
 let frameCount = 0;
 
-const buttons = [
-    { label: '清空', x: 0.08, y: 0.82, w: 110, h: 55, color: '#8b4513', action: clearCanvas },
-    { label: '蓋章', x: 0.76, y: 0.82, w: 110, h: 55, color: '#b22222', action: nextLevel }
-];
+// 書寫狀態
+let isDrawing = false;
+let lastX = 0, lastY = 0;
+let strokeCanvas, strokeCtx;   // 筆跡層
 
+// 虛擬按鈕區域（用百分比，碰撞在 canvas 空間算）
+const BTN_CLEAR = { label: '🗑 清空', x: 0.04, y: 0.80, w: 0.18, h: 0.10, color: 'rgba(120,60,0,0.85)' };
+const BTN_NEXT  = { label: '✅ 下一關', x: 0.78, y: 0.80, w: 0.18, h: 0.10, color: 'rgba(160,20,20,0.85)' };
+
+let btnDebounce = false;
+
+// ═══════════════════════════════════════
+// 畫布初始化
+// ═══════════════════════════════════════
+function resizeCanvas() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    if (strokeCanvas) {
+        const prev = strokeCtx.getImageData(0, 0, strokeCanvas.width, strokeCanvas.height);
+        strokeCanvas.width  = canvas.width;
+        strokeCanvas.height = canvas.height;
+        strokeCtx.putImageData(prev, 0, 0);
+    }
+    setupStrokeCtx();
+}
+window.addEventListener('resize', resizeCanvas);
+
+function setupStrokeCtx() {
+    if (!strokeCanvas) {
+        strokeCanvas = document.createElement('canvas');
+    }
+    strokeCanvas.width  = canvas.width;
+    strokeCanvas.height = canvas.height;
+    strokeCtx = strokeCanvas.getContext('2d');
+    strokeCtx.lineCap   = 'round';
+    strokeCtx.lineJoin  = 'round';
+    strokeCtx.strokeStyle = '#1a1a1a';
+}
+
+resizeCanvas();
+
+// ═══════════════════════════════════════
+// 顯示更新
+// ═══════════════════════════════════════
+function updateHUD() {
+    const p = poems[level % poems.length];
+    levelNumEl.innerText  = level + 1;
+    poemTitleEl.innerText = p.title;
+    scoreEl.innerText     = score;
+    curCharEl.innerHTML   = `練習詩句：<span style="font-size:22px;letter-spacing:4px;">${p.lines.join('　')}</span>`;
+}
+
+// ═══════════════════════════════════════
+// 詩句繪製（臨摹底稿）
+// ═══════════════════════════════════════
+function drawPoemGuide() {
+    const p = poems[level % poems.length];
+    const W = canvas.width, H = canvas.height;
+
+    // 決定字體大小：依行數和視窗自動縮放
+    const lineCount = p.lines.length;
+    const maxLineLen = Math.max(...p.lines.map(l => l.length));
+    // 橫排：每行一行，縱向排列
+    const fontSize = Math.min(
+        Math.floor((H * 0.55) / lineCount) - 8,   // 縱向不超過
+        Math.floor((W * 0.75) / maxLineLen) - 4,   // 橫向不超過
+        120
+    );
+
+    ctx.save();
+    ctx.font         = `bold ${fontSize}px "標楷體", "DFKai-SB", "楷體", serif`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+
+    const totalH    = lineCount * (fontSize + 18);
+    const startY    = (H - totalH) / 2 + fontSize / 2 + 10;
+
+    p.lines.forEach((line, i) => {
+        const cy = startY + i * (fontSize + 18);
+        // 白色描邊讓字在任何背景清晰
+        ctx.lineWidth   = Math.max(6, fontSize * 0.08);
+        ctx.strokeStyle = 'rgba(255,255,255,0.30)';
+        ctx.strokeText(line, W / 2, cy);
+        // 深灰填色（臨摹底稿感）
+        ctx.fillStyle   = 'rgba(55, 50, 45, 0.62)';
+        ctx.fillText(line, W / 2, cy);
+    });
+    ctx.restore();
+}
+
+// ═══════════════════════════════════════
+// 虛擬按鈕繪製
+// ═══════════════════════════════════════
+function drawButton(btn) {
+    const W = canvas.width, H = canvas.height;
+    const x = btn.x * W, y = btn.y * H;
+    const w = btn.w * W, h = btn.h * H;
+
+    ctx.save();
+    ctx.fillStyle = btn.color;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y, w, h, 14);
+    else ctx.rect(x, y, w, h);
+    ctx.fill();
+
+    ctx.fillStyle    = '#ffeb3b';
+    ctx.font         = `bold ${Math.floor(h * 0.42)}px "標楷體", "DFKai-SB", serif`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(btn.label, x + w / 2, y + h / 2);
+    ctx.restore();
+}
+
+// ═══════════════════════════════════════
+// 書寫筆跡
+// ═══════════════════════════════════════
+function drawStroke(x, y) {
+    const dist = Math.hypot(x - lastX, y - lastY);
+    const lw   = Math.max(4, 20 - dist * 0.4);
+    strokeCtx.lineWidth = lw;
+    strokeCtx.beginPath();
+    strokeCtx.moveTo(lastX, lastY);
+    strokeCtx.lineTo(x, y);
+    strokeCtx.stroke();
+    lastX = x; lastY = y;
+}
+
+function clearStrokes() {
+    strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+}
+
+// ═══════════════════════════════════════
+// 下一關
+// ═══════════════════════════════════════
+function nextLevel() {
+    if (btnDebounce) return;
+    btnDebounce = true;
+    score += 50;
+    stampEl.classList.add('active');
+    setTimeout(() => {
+        stampEl.classList.remove('active');
+        level++;
+        localStorage.setItem('airCalliLevel', level);
+        localStorage.setItem('airCalliScore', score);
+        updateHUD();
+        clearStrokes();
+        btnDebounce = false;
+    }, 900);
+}
+
+// ═══════════════════════════════════════
+// 碰撞（座標已在鏡像補償後的空間）
+// ═══════════════════════════════════════
+function checkButtons(nx, ny) {
+    // nx, ny 是 0~1 正規化
+    function hit(btn) {
+        return nx > btn.x && nx < btn.x + btn.w &&
+               ny > btn.y && ny < btn.y + btn.h;
+    }
+    if (hit(BTN_CLEAR)) { clearStrokes(); }
+    if (hit(BTN_NEXT))  { nextLevel(); }
+}
+
+// ═══════════════════════════════════════
+// MediaPipe onResults
+// ═══════════════════════════════════════
+function onResults(results) {
+    const W = canvas.width, H = canvas.height;
+
+    ctx.save();
+    ctx.clearRect(0, 0, W, H);
+
+    // ── 鏡像：畫面如照鏡子（攝影機 + 骨架一起翻）
+    ctx.translate(W, 0);
+    ctx.scale(-1, 1);
+
+    // 1. 攝影機畫面
+    if (results.image) {
+        ctx.globalAlpha = 0.45;
+        ctx.drawImage(results.image, 0, 0, W, H);
+        ctx.globalAlpha = 1;
+    }
+
+    // 2. 骨架
+    let handDetected = false;
+    let tipNX = null, tipNY = null; // 食指在正規化空間（鏡像後）
+
+    if (results.multiHandLandmarks?.length > 0) {
+        handDetected = true;
+        const landmarks = results.multiHandLandmarks[0];
+
+        drawConnectors(ctx, landmarks, HAND_CONNECTIONS, { color: '#00e676', lineWidth: 3 });
+        drawLandmarks(ctx, landmarks, { color: '#ff1744', lineWidth: 1, radius: 4 });
+
+        const tip   = landmarks[8];  // 食指指尖
+        const base  = landmarks[5];  // 食指根部
+        const thumb = landmarks[4];  // 拇指尖
+        const mid   = landmarks[12]; // 中指尖
+
+        // MediaPipe 輸出的 x 已是鏡像後的值（自拍視角）
+        tipNX = tip.x;
+        tipNY = tip.y;
+
+        const tipPX  = tipNX * W;
+        const tipPY  = tipNY * H;
+
+        // 食指指尖高亮圈
+        ctx.beginPath();
+        ctx.arc(tipPX, tipPY, 20, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ffeb3b';
+        ctx.lineWidth   = 3;
+        ctx.stroke();
+        ctx.fillStyle   = 'rgba(255,235,59,0.25)';
+        ctx.fill();
+
+        // 書寫判斷：食指伸出（指尖高於根部）且非握拳
+        // tip.y < base.y 表示食指向上伸
+        const fingerUp = tip.y < base.y - 0.03;
+        // 拇指和中指距離遠 → 非握拳
+        const notFist  = Math.hypot(thumb.x - mid.x, thumb.y - mid.y) > 0.08;
+        const penDown  = fingerUp && notFist;
+
+        // 書寫（筆跡畫在 strokeCanvas，座標需轉回未翻轉空間）
+        // strokeCanvas 不做翻轉，但 drawPoemGuide 也不翻轉，兩者對齊
+        // 食指 tipNX 在鏡像空間，strokeCanvas 要用同樣鏡像座標
+        // → 統一用 tipNX * W 即可（strokeCtx 不翻轉，用相同像素 x）
+        if (penDown) {
+            if (!isDrawing) {
+                isDrawing = true;
+                lastX = tipPX; lastY = tipPY;
+            }
+            drawStroke(tipPX, tipPY);
+        } else {
+            isDrawing = false;
+        }
+    } else {
+        isDrawing = false;
+    }
+
+    ctx.restore(); // ← 回到未翻轉空間
+
+    // 3. 詩句底稿（未翻轉，文字正向）
+    drawPoemGuide();
+
+    // 4. 筆跡（未翻轉，和底稿同空間）
+    ctx.drawImage(strokeCanvas, 0, 0);
+
+    // 5. 按鈕
+    drawButton(BTN_CLEAR);
+    drawButton(BTN_NEXT);
+
+    // 6. 按鈕碰撞偵測
+    if (tipNX !== null && !btnDebounce) {
+        checkButtons(tipNX, tipNY);
+    }
+
+    // 7. 狀態
+    statusEl.textContent = handDetected
+        ? '✍️ 食指伸直書寫・握拳停筆'
+        : '✋ 請將手放入畫面';
+}
+
+// ═══════════════════════════════════════
+// 初始化
+// ═══════════════════════════════════════
 function init() {
-    bgCanvas.width  = drawCanvas.width  = window.innerWidth;
-    bgCanvas.height = drawCanvas.height = window.innerHeight;
+    updateHUD();
 
-    drawCtx.lineCap     = 'round';
-    drawCtx.lineJoin    = 'round';
-    drawCtx.strokeStyle = '#1a1a1a';
-
-    updateLevelDisplay();
-
-    // 預覽用攝影機（獨立串流）
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
-        .then(stream => {
-            document.getElementById('preview_video').srcObject = stream;
-        })
-        .catch(err => console.warn('預覽攝影機:', err));
-
-    // MediaPipe Hands
     const hands = new Hands({
         locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
     });
-    hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.65,
+        minTrackingConfidence: 0.65
+    });
     hands.onResults(onResults);
 
-    const videoEl = document.getElementById('input_video');
-    const camera  = new Camera(videoEl, {
+    const camera = new Camera(videoEl, {
         onFrame: async () => {
             frameCount++;
-            if (frameCount === 1) {
-                // 第一幀抵達，確認攝影機正常，關閉遮罩
-                loadingOverlay.classList.add('hidden');
-            }
+            if (frameCount === 1) loadingEl.classList.add('hidden');
             await hands.send({ image: videoEl });
         },
         width: 1280, height: 720
     });
 
     camera.start().catch(err => {
-        loadingMsg.textContent = '⚠️ 攝影機啟動失敗：' + err.message;
-        console.error(err);
+        loadMsgEl.textContent = '⚠️ 攝影機啟動失敗：' + err.message;
     });
-}
-
-function drawUI() {
-    bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
-
-    // 1. 攝影機背景（半透明）
-    const vid = document.getElementById('input_video');
-    if (vid.readyState >= 2) {
-        bgCtx.save();
-        bgCtx.globalAlpha = 0.35;
-        bgCtx.drawImage(vid, 0, 0, bgCanvas.width, bgCanvas.height);
-        bgCtx.restore();
-    }
-
-    // 2. 詩句文字
-    // game-area 有 scaleX(-1) → canvas 繪製的文字也被翻轉，變成鏡像反字
-    // 解法：每個字繪製前 scale(-1,1) 抵消，螢幕上就會正常顯示
-    const p = poems[currentLevel % poems.length];
-    bgCtx.font         = "bold 88px '標楷體', 'DFKai-SB', '楷體', serif";
-    bgCtx.textAlign    = 'center';
-    bgCtx.textBaseline = 'middle';
-
-    p.content.forEach((line, i) => {
-        const cx = bgCanvas.width / 2;
-        const cy = 170 + i * 125;
-        bgCtx.save();
-        bgCtx.translate(cx, cy);
-        bgCtx.scale(-1, 1);
-        // 白邊讓文字在任何背景都清晰
-        bgCtx.lineWidth   = 5;
-        bgCtx.strokeStyle = 'rgba(255,255,255,0.45)';
-        bgCtx.strokeText(line, 0, 0);
-        bgCtx.fillStyle   = 'rgba(48, 42, 36, 0.65)';
-        bgCtx.fillText(line, 0, 0);
-        bgCtx.restore();
-    });
-
-    // 3. 虛擬按鈕
-    buttons.forEach(btn => {
-        const bx = btn.x * bgCanvas.width;
-        const by = btn.y * bgCanvas.height;
-        bgCtx.save();
-        bgCtx.translate(bx + btn.w / 2, by + btn.h / 2);
-        bgCtx.scale(-1, 1);
-        bgCtx.fillStyle = btn.color;
-        bgCtx.beginPath();
-        if (bgCtx.roundRect) {
-            bgCtx.roundRect(-btn.w/2, -btn.h/2, btn.w, btn.h, 12);
-        } else {
-            bgCtx.rect(-btn.w/2, -btn.h/2, btn.w, btn.h);
-        }
-        bgCtx.fill();
-        bgCtx.fillStyle    = '#fff';
-        bgCtx.font         = "bold 22px '標楷體', 'DFKai-SB', serif";
-        bgCtx.textAlign    = 'center';
-        bgCtx.textBaseline = 'middle';
-        bgCtx.fillText(btn.label, 0, 0);
-        bgCtx.restore();
-    });
-}
-
-function onResults(results) {
-    drawUI();
-
-    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        indicator.textContent = '✍️ 偵測到手';
-        indicator.style.color = '#7fff7f';
-
-        const hand      = results.multiHandLandmarks[0];
-        const indexTip  = hand[8];
-        const indexBase = hand[5];
-        const x = indexTip.x * drawCanvas.width;
-        const y = indexTip.y * drawCanvas.height;
-
-        buttons.forEach(btn => {
-            const bx = btn.x * bgCanvas.width;
-            const by = btn.y * bgCanvas.height;
-            if (x > bx && x < bx + btn.w && y > by && y < by + btn.h) {
-                if (!nextDebounce) btn.action();
-            }
-        });
-
-        if (indexTip.y < indexBase.y - 0.02) {
-            if (!isDrawing) { isDrawing = true; lastX = x; lastY = y; }
-            drawStroke(x, y);
-        } else {
-            isDrawing = false;
-        }
-    } else {
-        isDrawing = false;
-        indicator.textContent = '✋ 未偵測到手';
-        indicator.style.color = '#ffb347';
-    }
-}
-
-function drawStroke(x, y) {
-    const dist = Math.hypot(x - lastX, y - lastY);
-    drawCtx.lineWidth = Math.max(3, 15 - dist * 0.5);
-    drawCtx.beginPath();
-    drawCtx.moveTo(lastX, lastY);
-    drawCtx.lineTo(x, y);
-    drawCtx.stroke();
-    lastX = x; lastY = y;
-}
-
-function clearCanvas() {
-    drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-}
-
-function nextLevel() {
-    nextDebounce = true;
-    stamp.classList.add('active');
-    setTimeout(() => {
-        stamp.classList.remove('active');
-        currentLevel++;
-        localStorage.setItem('calligraphyLevel', currentLevel);
-        updateLevelDisplay();
-        clearCanvas();
-        nextDebounce = false;
-    }, 1000);
-}
-
-function updateLevelDisplay() {
-    document.getElementById('levelNum').innerText  = currentLevel + 1;
-    document.getElementById('poemTitle').innerText = poems[currentLevel % poems.length].title;
 }
 
 window.onload = init;
