@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>空中書法闖關 - 宗師版</title>
+    <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
+    <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; background: #e8e4d9; font-family: "標楷體", "DFKai-SB", serif; overflow: hidden; }
+        #container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        canvas { position: absolute; transform: scaleX(-1); }
+        video { transform: scaleX(-1); display: none; }
+        
+        /* UI 層 */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        .hud { position: absolute; top: 20px; width: 100%; text-align: center; color: #3e3a31; }
+        .level-info { font-size: 32px; background: rgba(255,255,255,0.8); padding: 10px 30px; border-radius: 50px; border: 2px solid #8b4513; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
+        
+        /* 印章動畫樣式 */
+        #stamp { 
+            position: absolute; width: 120px; height: 120px; border: 4px solid #b22222; color: #b22222; 
+            font-size: 40px; display: flex; align-items: center; justify-content: center; 
+            font-weight: bold; opacity: 0; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s;
+            z-index: 15; right: 10%; bottom: 20%; transform: scale(2) rotate(-15deg);
+        }
+        #stamp.active { opacity: 0.8; transform: scale(1) rotate(-15deg); }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <video id="input_video"></video>
+    <canvas id="bg_canvas"></canvas>
+    <canvas id="draw_canvas" style="pointer-events: auto;"></canvas>
+    
+    <div id="ui-layer">
+        <div class="hud">
+            <span class="level-info">第 <span id="levelNum">1</span> 關：<span id="poemTitle">載入中</span></span>
+        </div>
+        <div id="stamp">御筆</div>
+    </div>
+</div>
+
+<!-- 音效 (使用開放來源) -->
+<audio id="bgm" loop src="https://soundhelix.com"></audio>
+
+<script>
+    const poems = [
+        { title: "靜夜思", content: ["床前明月光", "疑是地上霜", "舉頭望明月", "低頭思故鄉"] },
+        { title: "春曉", content: ["春眠不覺曉", "處處聞啼鳥", "夜來風雨聲", "花落知多少"] },
+        { title: "登鸛雀樓", content: ["白日依山盡", "黃河入海流", "欲窮千里目", "更上一層樓"] },
+        { title: "江雪", content: ["千山鳥飛絕", "萬徑人蹤滅", "孤舟蓑笠翁", "獨釣寒江雪"] }
+    ];
+
+    let currentLevel = parseInt(localStorage.getItem('calligraphyLevel')) || 0;
+    const bgCanvas = document.getElementById('bg_canvas');
+    const drawCanvas = document.getElementById('draw_canvas');
+    const bgCtx = bgCanvas.getContext('2d');
+    const drawCtx = drawCanvas.getContext('2d');
+    const stamp = document.getElementById('stamp');
+    const bgm = document.getElementById('bgm');
+
+    let lastX = 0, lastY = 0, isDrawing = false, isMouseActive = false;
+    let nextDebounce = false; // 防止連續觸發下一關
+
+    const buttons = [
+        { label: '清空', x: 0.08, y: 0.85, w: 0.1, h: 0.07, color: '#8b4513', action: clearCanvas },
+        { label: '蓋章前進', x: 0.82, y: 0.85, w: 0.12, h: 0.07, color: '#b22222', action: nextLevel }
+    ];
+
+    function init() {
+        bgCanvas.width = drawCanvas.width = window.innerWidth;
+        bgCanvas.height = drawCanvas.height = window.innerHeight;
+        drawCtx.lineCap = 'round';
+        drawCtx.strokeStyle = 'rgba(20,20,20,0.9)';
+        drawCtx.shadowBlur = 3;
+        drawCtx.shadowColor = 'black';
+        updateLevelDisplay();
+        
+        // 第一次點擊啟動音樂 (因瀏覽器策略)
+        window.onclick = () => { if(bgm.paused) bgm.play(); };
+    }
+
+    // 書寫邏輯 (手指+滑鼠共通)
+    function drawStroke(x, y) {
+        const dist = Math.hypot(x - lastX, y - lastY);
+        drawCtx.lineWidth = Math.max(4, 18 - dist * 0.7);
+        drawCtx.beginPath();
+        drawCtx.moveTo(lastX, lastY);
+        drawCtx.lineTo(x, y);
+        drawCtx.stroke();
+        lastX = x; lastY = y;
+    }
+
+    // 滑鼠事件
+    drawCanvas.onmousedown = (e) => { isMouseActive = true; lastX = drawCanvas.width - e.clientX; lastY = e.clientY; };
+    drawCanvas.onmousemove = (e) => { if(isMouseActive) drawStroke(drawCanvas.width - e.clientX, e.clientY); };
+    window.onmouseup = () => isMouseActive = false;
+
+    function drawUI() {
+        bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+        bgCtx.save();
+        bgCtx.globalAlpha = 0.35;
+        bgCtx.drawImage(document.getElementById('input_video'), 0, 0, bgCanvas.width, bgCanvas.height);
+        bgCtx.restore();
+
+        const p = poems[currentLevel % poems.length];
+        bgCtx.textAlign = "center";
+        bgCtx.fillStyle = "rgba(0,0,0,0.1)";
+        bgCtx.font = "bold 80px 標楷體";
+        p.content.forEach((line, i) => bgCtx.fillText(line, bgCanvas.width/2, 180 + i*130));
+
+        buttons.forEach(btn => {
+            const bx = btn.x * bgCanvas.width, by = btn.y * bgCanvas.height;
+            bgCtx.fillStyle = btn.color;
+            bgCtx.globalAlpha = 0.8;
+            bgCtx.fillRect(bx, by, btn.w*bgCanvas.width, btn.h*bgCanvas.height);
+            bgCtx.fillStyle = "white";
+            bgCtx.font = "24px 標楷體";
+            bgCtx.fillText(btn.label, bx + (btn.w*bgCanvas.width)/2, by + (btn.h*bgCanvas.height)/2 + 10);
+        });
+    }
+
+    function onResults(results) {
+        drawUI();
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const tip = results.multiHandLandmarks[0][8];
+            const base = results.multiHandLandmarks[0][5];
+            const x = (1 - tip.x) * drawCanvas.width;
+            const y = tip.y * drawCanvas.height;
+
+            buttons.forEach(btn => {
+                if (x > btn.x*bgCanvas.width && x < (btn.x+btn.w)*bgCanvas.width &&
+                    y > btn.y*bgCanvas.height && y < (btn.y+btn.h)*bgCanvas.height) {
+                    if(!nextDebounce) btn.action();
+                }
+            });
+
+            if (tip.y < base.y) {
+                if (!isDrawing) { isDrawing = true; lastX = x; lastY = y; }
+                drawStroke(x, y);
+            } else { isDrawing = false; }
+        }
+    }
+
+    function clearCanvas() { drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height); }
+
+    function nextLevel() {
+        nextDebounce = true;
+        stamp.classList.add('active'); // 顯示印章動畫
+        
+        setTimeout(() => {
+            stamp.classList.remove('active');
+            currentLevel++;
+            localStorage.setItem('calligraphyLevel', currentLevel);
+            updateLevelDisplay();
+            clearCanvas();
+            nextDebounce = false;
+        }, 1500);
+    }
+
+    function updateLevelDisplay() {
+        document.getElementById('levelNum').innerText = currentLevel + 1;
+        document.getElementById('poemTitle').innerText = poems[currentLevel % poems.length].title;
+    }
+
+    window.onload = init;
+    const hands = new Hands({ locateFile: (file) => `https://jsdelivr.net{file}` });
+    hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.7 });
+    hands.onResults(onResults);
+    new Camera(document.getElementById('input_video'), {
+        onFrame: async () => { await hands.send({image: document.getElementById('input_video')}); },
+        width: 1280, height: 720
+    }).start();
+</script>
+</body>
+</html>

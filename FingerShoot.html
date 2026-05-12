@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 穩定瞄準模擬器 (中指射擊版)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #111; color: #fff; font-family: 'Courier New', Courier, monospace; }
+        canvas { transform: scaleX(-1); width: 100vw; height: 100vh; object-fit: cover; }
+        video { display: none; }
+        #hud { position: absolute; top: 20px; left: 20px; z-index: 10; background: rgba(0,0,0,0.7); padding: 15px; border: 2px solid #00ff00; }
+        #trigger-indicator { display: inline-block; width: 20px; height: 20px; border-radius: 50%; background: #555; margin-left: 10px; }
+        .active { background: #ff0000 !important; box-shadow: 0 0 10px #ff0000; }
+    </style>
+</head>
+<body>
+
+<div id="hud">
+    <div style="font-size: 1.5rem;">SCORE: <span id="score">0</span></div>
+    <div style="margin-top: 5px;">扳機狀態: <span id="trigger-indicator"></span></div>
+    <div style="font-size: 0.8rem; color: #aaa; margin-top: 10px;">操作：食指瞄準，中指往下撥(扣)即射擊</div>
+</div>
+
+<video id="input_video"></video>
+<canvas id="output_canvas"></canvas>
+
+<script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const scoreVal = document.getElementById('score');
+    const indicator = document.getElementById('trigger-indicator');
+
+    let score = 0;
+    let target = { x: 0.5, y: 0.5, r: 45 };
+    let canShoot = true;
+
+    function initCanvas() {
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+    }
+    window.onresize = initCanvas;
+    initCanvas();
+
+    function onResults(results) {
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+        // 畫出目標靶心
+        drawSimpleTarget(target.x * canvasElement.width, target.y * canvasElement.height, target.r);
+
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const hand = results.multiHandLandmarks[0];
+            const indexTip = hand[8];  // 食指尖 (準心)
+            const middleTip = hand[12]; // 中指尖 (扳機)
+
+            const ix = indexTip.x * canvasElement.width;
+            const iy = indexTip.y * canvasElement.height;
+            const mx = middleTip.x * canvasElement.width;
+            const my = middleTip.y * canvasElement.height;
+
+            // 繪製準心
+            canvasCtx.beginPath();
+            canvasCtx.arc(ix, iy, 20, 0, Math.PI*2);
+            canvasCtx.strokeStyle = "#00ff00";
+            canvasCtx.lineWidth = 2;
+            canvasCtx.stroke();
+            canvasCtx.moveTo(ix-25, iy); canvasCtx.lineTo(ix+25, iy);
+            canvasCtx.moveTo(ix, iy-25); canvasCtx.lineTo(ix, iy+25);
+            canvasCtx.stroke();
+
+            // 射擊偵測邏輯：判斷中指是否明顯低於食指
+            // 在 MediaPipe 中，Y 越大代表越往下
+            const verticalDiff = middleTip.y - indexTip.y;
+            
+            if (verticalDiff > 0.08) { // 如果中指低於食指超過一定門檻
+                indicator.classList.add('active');
+                if (canShoot) {
+                    fire(indexTip.x, indexTip.y);
+                    canShoot = false; // 防止連發
+                }
+            } else {
+                indicator.classList.remove('active');
+                canShoot = true;
+            }
+            
+            // 畫出手指連接線幫助觀察
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(ix, iy);
+            canvasCtx.lineTo(mx, my);
+            canvasCtx.strokeStyle = "rgba(255,255,255,0.3)";
+            canvasCtx.stroke();
+        }
+        canvasCtx.restore();
+    }
+
+    function fire(x, y) {
+        const dx = x - target.x;
+        const dy = y - target.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist < 0.06) { // 擊中判定
+            score += 100;
+            scoreVal.innerText = score;
+            // 震動回饋 (如果裝置支援)
+            if (navigator.vibrate) navigator.vibrate(50);
+            
+            // 更換靶位
+            target.x = Math.random() * 0.8 + 0.1;
+            target.y = Math.random() * 0.8 + 0.1;
+        }
+    }
+
+    function drawSimpleTarget(x, y, r) {
+        for(let i=3; i>0; i--) {
+            canvasCtx.beginPath();
+            canvasCtx.arc(x, y, r * (i/3), 0, Math.PI*2);
+            canvasCtx.fillStyle = i === 1 ? "#ff0000" : (i === 2 ? "#fff" : "#ff0000");
+            canvasCtx.fill();
+        }
+    }
+
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+    hands.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 1280, height: 720
+    });
+    camera.start();
+</script>
+</body>
+</html>
