@@ -18,7 +18,48 @@
         .hud { position: absolute; top: 20px; width: 100%; text-align: center; color: #3e3a31; pointer-events: none; }
         .level-info { font-size: 32px; background: rgba(255,255,255,0.9); padding: 10px 30px; border-radius: 50px; border: 2px solid #8b4513; }
         
-        #stamp { 
+        #cam-preview {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 200px;
+            height: 150px;
+            border: 3px solid #8b4513;
+            border-radius: 12px;
+            overflow: hidden;
+            z-index: 100;
+            background: #000;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+        }
+        #cam-preview video {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* 自拍鏡像，讓使用者看到正確方向 */
+        }
+        #cam-preview-label {
+            position: absolute;
+            top: 4px;
+            left: 8px;
+            font-size: 12px;
+            color: rgba(255,255,255,0.85);
+            text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+            pointer-events: none;
+            font-family: "標楷體", serif;
+        }
+        #hand-indicator {
+            position: absolute;
+            bottom: 4px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            font-size: 13px;
+            font-family: "標楷體", serif;
+            color: #7fff7f;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+            transition: color 0.2s;
+        }
             position: absolute; width: 120px; height: 120px; border: 4px solid #b22222; color: #b22222; 
             font-size: 40px; display: flex; align-items: center; justify-content: center; 
             font-weight: bold; opacity: 0; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
@@ -42,6 +83,13 @@
         </div>
         <div id="stamp">御筆</div>
     </div>
+</div>
+
+<!-- 相機預覽小畫面 -->
+<div id="cam-preview">
+    <video id="preview_video" autoplay playsinline muted></video>
+    <span id="cam-preview-label">📷 你的畫面</span>
+    <div id="hand-indicator">✋ 未偵測到手</div>
 </div>
 
 <script>
@@ -158,7 +206,16 @@
             onFrame: async () => { await hands.send({image: document.getElementById('input_video')}); },
             width: 1280, height: 720
         });
-        camera.start();
+        camera.start().then(() => {
+            // 將同一個攝影機串流同步到預覽小視窗
+            const vid = document.getElementById('input_video');
+            vid.addEventListener('loadedmetadata', () => {
+                document.getElementById('preview_video').srcObject = vid.srcObject;
+            });
+            if (vid.srcObject) {
+                document.getElementById('preview_video').srcObject = vid.srcObject;
+            }
+        });
     }
 
     function drawUI() {
@@ -175,12 +232,18 @@
         bgCtx.save();
         bgCtx.textAlign = "center";
         bgCtx.textBaseline = "middle";
-        bgCtx.fillStyle = "rgba(0, 0, 0, 0.15)"; // 淺灰色字體方便臨摹
-        bgCtx.font = "bold 100px '標楷體'";
+        bgCtx.fillStyle = "rgba(60, 55, 50, 0.55)"; // 深灰色字體方便臨摹
+        bgCtx.font = "bold 100px '標楷體', '楷體', serif";
         
         p.content.forEach((line, i) => {
-            // 計算垂直排列位置
-            bgCtx.fillText(line, bgCanvas.width / 2, 200 + i * 140);
+            // 因為 game-area 已做 scaleX(-1) 鏡像，canvas 繪製文字需反向補償
+            bgCtx.save();
+            const cx = bgCanvas.width / 2;
+            const cy = 200 + i * 140;
+            bgCtx.translate(cx, cy);
+            bgCtx.scale(-1, 1); // 反向補償鏡像，讓文字正常顯示
+            bgCtx.fillText(line, 0, 0);
+            bgCtx.restore();
         });
         bgCtx.restore();
 
@@ -188,17 +251,28 @@
         buttons.forEach(btn => {
             const bx = btn.x * bgCanvas.width;
             const by = btn.y * bgCanvas.height;
+            bgCtx.save();
+            bgCtx.translate(bx + btn.w/2, by + btn.h/2);
+            bgCtx.scale(-1, 1); // 補償鏡像，讓按鈕文字正向
             bgCtx.fillStyle = btn.color;
-            bgCtx.roundRect ? bgCtx.fillRoundRect : bgCtx.fillRect(bx, by, btn.w, btn.h);
+            bgCtx.beginPath();
+            bgCtx.roundRect ? bgCtx.roundRect(-btn.w/2, -btn.h/2, btn.w, btn.h, 10) : null;
+            bgCtx.fill();
             bgCtx.fillStyle = "white";
-            bgCtx.font = "20px '標楷體'";
-            bgCtx.fillText(btn.label, bx + btn.w/2, by + btn.h/2 + 7);
+            bgCtx.font = "bold 20px '標楷體', '楷體', serif";
+            bgCtx.textAlign = "center";
+            bgCtx.textBaseline = "middle";
+            bgCtx.fillText(btn.label, 0, 0);
+            bgCtx.restore();
         });
     }
 
     function onResults(results) {
         drawUI();
+        const indicator = document.getElementById('hand-indicator');
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            indicator.textContent = '✍️ 偵測到手';
+            indicator.style.color = '#7fff7f';
             const hand = results.multiHandLandmarks[0];
             const indexTip = hand[8];  // 食指指尖
             const indexBase = hand[5]; // 食指關節
@@ -225,8 +299,11 @@
             } else {
                 isDrawing = false;
             }
+        } else {
+            isDrawing = false;
+            indicator.textContent = '✋ 未偵測到手';
+            indicator.style.color = '#ffb347';
         }
-    }
 
     function drawStroke(x, y) {
         const dist = Math.hypot(x - lastX, y - lastY);
