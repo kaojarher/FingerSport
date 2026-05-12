@@ -3,35 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <title>空中書法闖關 - 宗師版</title>
-    <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
-    <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
+    <!-- 修正 CDN 路徑 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <style>
         body { margin: 0; background: #e8e4d9; font-family: "標楷體", "DFKai-SB", serif; overflow: hidden; }
         #container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
-        canvas { position: absolute; transform: scaleX(-1); }
-        video { transform: scaleX(-1); display: none; }
+        /* 統一鏡像處理：只翻轉容器，不單獨翻轉畫布，避免座標混亂 */
+        #game-area { position: relative; width: 100%; height: 100%; transform: scaleX(-1); }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        video { display: none; }
         
-        /* UI 層 */
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
-        .hud { position: absolute; top: 20px; width: 100%; text-align: center; color: #3e3a31; }
-        .level-info { font-size: 32px; background: rgba(255,255,255,0.8); padding: 10px 30px; border-radius: 50px; border: 2px solid #8b4513; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; transform: scaleX(1); }
+        .hud { position: absolute; top: 20px; width: 100%; text-align: center; color: #3e3a31; pointer-events: none; }
+        .level-info { font-size: 32px; background: rgba(255,255,255,0.9); padding: 10px 30px; border-radius: 50px; border: 2px solid #8b4513; }
         
-        /* 印章動畫樣式 */
         #stamp { 
             position: absolute; width: 120px; height: 120px; border: 4px solid #b22222; color: #b22222; 
             font-size: 40px; display: flex; align-items: center; justify-content: center; 
-            font-weight: bold; opacity: 0; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s;
-            z-index: 15; right: 10%; bottom: 20%; transform: scale(2) rotate(-15deg);
+            font-weight: bold; opacity: 0; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            right: 10%; bottom: 20%; transform: rotate(-15deg) scale(2);
         }
-        #stamp.active { opacity: 0.8; transform: scale(1) rotate(-15deg); }
+        #stamp.active { opacity: 0.8; transform: rotate(-15deg) scale(1); }
     </style>
 </head>
 <body>
 
 <div id="container">
-    <video id="input_video"></video>
-    <canvas id="bg_canvas"></canvas>
-    <canvas id="draw_canvas" style="pointer-events: auto;"></canvas>
+    <div id="game-area">
+        <video id="input_video"></video>
+        <canvas id="bg_canvas"></canvas>
+        <canvas id="draw_canvas"></canvas>
+    </div>
     
     <div id="ui-layer">
         <div class="hud">
@@ -40,9 +43,6 @@
         <div id="stamp">御筆</div>
     </div>
 </div>
-
-<!-- 音效 (使用開放來源) -->
-<audio id="bgm" loop src="https://soundhelix.com"></audio>
 
 <script>
     const poems = [
@@ -119,7 +119,7 @@
   { title: "長恨歌", content: ["漢皇重色思傾國", "御宇多年求不得", "楊家有女初長成", "養在深閨人未識", "天生麗質難自棄", "一朝選在君王側", "回眸一笑百媚生", "六宮粉黛無顏色", "春寒賜浴華清池", "溫泉水滑洗凝脂", "侍兒扶起嬌無力", "始是新承恩澤時"] }, // 篇幅極長，僅列開頭
   { title: "蜀道難", content: ["噫吁戲", "危乎高哉", "蜀道之難難於上青天", "蠶叢及魚鳧", "開國何茫然", "爾來四萬八千歲", "不與秦塞通人煙", "西當太白有鳥道", "可以橫絕峨嵋巔", "地崩山摧壯士死", "然後天梯石棧方鉤連"] }
 
-    ];
+   ];
 
     let currentLevel = parseInt(localStorage.getItem('calligraphyLevel')) || 0;
     const bgCanvas = document.getElementById('bg_canvas');
@@ -127,33 +127,110 @@
     const bgCtx = bgCanvas.getContext('2d');
     const drawCtx = drawCanvas.getContext('2d');
     const stamp = document.getElementById('stamp');
-    const bgm = document.getElementById('bgm');
 
-    let lastX = 0, lastY = 0, isDrawing = false, isMouseActive = false;
-    let nextDebounce = false; // 防止連續觸發下一關
+    let lastX = 0, lastY = 0, isDrawing = false;
+    let nextDebounce = false;
 
     const buttons = [
-        { label: '清空', x: 0.08, y: 0.85, w: 0.1, h: 0.07, color: '#8b4513', action: clearCanvas },
-        { label: '蓋章前進', x: 0.82, y: 0.85, w: 0.12, h: 0.07, color: '#b22222', action: nextLevel }
+        { label: '清空', x: 0.1, y: 0.8, w: 100, h: 50, color: '#8b4513', action: clearCanvas },
+        { label: '蓋章', x: 0.8, y: 0.8, w: 100, h: 50, color: '#b22222', action: nextLevel }
     ];
 
     function init() {
+        // 設定畫布解析度
         bgCanvas.width = drawCanvas.width = window.innerWidth;
         bgCanvas.height = drawCanvas.height = window.innerHeight;
+        
         drawCtx.lineCap = 'round';
-        drawCtx.strokeStyle = 'rgba(20,20,20,0.9)';
-        drawCtx.shadowBlur = 3;
-        drawCtx.shadowColor = 'black';
+        drawCtx.lineJoin = 'round';
+        drawCtx.strokeStyle = '#1a1a1a';
         updateLevelDisplay();
         
-        // 第一次點擊啟動音樂 (因瀏覽器策略)
-        window.onclick = () => { if(bgm.paused) bgm.play(); };
+        // 啟動相機與手勢辨識
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+        hands.onResults(onResults);
+
+        const camera = new Camera(document.getElementById('input_video'), {
+            onFrame: async () => { await hands.send({image: document.getElementById('input_video')}); },
+            width: 1280, height: 720
+        });
+        camera.start();
     }
 
-    // 書寫邏輯 (手指+滑鼠共通)
+    function drawUI() {
+        bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+        
+        // 1. 繪製半透明相機背景
+        bgCtx.save();
+        bgCtx.globalAlpha = 0.4;
+        bgCtx.drawImage(document.getElementById('input_video'), 0, 0, bgCanvas.width, bgCanvas.height);
+        bgCtx.restore();
+
+        // 2. 繪製臨摹文字 (核心修復)
+        const p = poems[currentLevel % poems.length];
+        bgCtx.save();
+        bgCtx.textAlign = "center";
+        bgCtx.textBaseline = "middle";
+        bgCtx.fillStyle = "rgba(0, 0, 0, 0.15)"; // 淺灰色字體方便臨摹
+        bgCtx.font = "bold 100px '標楷體'";
+        
+        p.content.forEach((line, i) => {
+            // 計算垂直排列位置
+            bgCtx.fillText(line, bgCanvas.width / 2, 200 + i * 140);
+        });
+        bgCtx.restore();
+
+        // 3. 繪製虛擬按鈕
+        buttons.forEach(btn => {
+            const bx = btn.x * bgCanvas.width;
+            const by = btn.y * bgCanvas.height;
+            bgCtx.fillStyle = btn.color;
+            bgCtx.roundRect ? bgCtx.fillRoundRect : bgCtx.fillRect(bx, by, btn.w, btn.h);
+            bgCtx.fillStyle = "white";
+            bgCtx.font = "20px '標楷體'";
+            bgCtx.fillText(btn.label, bx + btn.w/2, by + btn.h/2 + 7);
+        });
+    }
+
+    function onResults(results) {
+        drawUI();
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const hand = results.multiHandLandmarks[0];
+            const indexTip = hand[8];  // 食指指尖
+            const indexBase = hand[5]; // 食指關節
+            
+            const x = indexTip.x * drawCanvas.width;
+            const y = indexTip.y * drawCanvas.height;
+
+            // 檢查按鈕碰撞
+            buttons.forEach(btn => {
+                const bx = btn.x * bgCanvas.width;
+                const by = btn.y * bgCanvas.height;
+                if (x > bx && x < bx + btn.w && y > by && y < by + btn.h) {
+                    if(!nextDebounce) btn.action();
+                }
+            });
+
+            // 書寫邏輯：食指高於關節時偵測為「下筆」
+            if (indexTip.y < indexBase.y - 0.02) { 
+                if (!isDrawing) {
+                    isDrawing = true;
+                    lastX = x; lastY = y;
+                }
+                drawStroke(x, y);
+            } else {
+                isDrawing = false;
+            }
+        }
+    }
+
     function drawStroke(x, y) {
         const dist = Math.hypot(x - lastX, y - lastY);
-        drawCtx.lineWidth = Math.max(4, 18 - dist * 0.7);
+        drawCtx.lineWidth = Math.max(3, 15 - dist * 0.5); // 模擬毛筆粗細
         drawCtx.beginPath();
         drawCtx.moveTo(lastX, lastY);
         drawCtx.lineTo(x, y);
@@ -161,63 +238,11 @@
         lastX = x; lastY = y;
     }
 
-    // 滑鼠事件
-    drawCanvas.onmousedown = (e) => { isMouseActive = true; lastX = drawCanvas.width - e.clientX; lastY = e.clientY; };
-    drawCanvas.onmousemove = (e) => { if(isMouseActive) drawStroke(drawCanvas.width - e.clientX, e.clientY); };
-    window.onmouseup = () => isMouseActive = false;
-
-    function drawUI() {
-        bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
-        bgCtx.save();
-        bgCtx.globalAlpha = 0.35;
-        bgCtx.drawImage(document.getElementById('input_video'), 0, 0, bgCanvas.width, bgCanvas.height);
-        bgCtx.restore();
-
-        const p = poems[currentLevel % poems.length];
-        bgCtx.textAlign = "center";
-        bgCtx.fillStyle = "rgba(0,0,0,0.1)";
-        bgCtx.font = "bold 80px 標楷體";
-        p.content.forEach((line, i) => bgCtx.fillText(line, bgCanvas.width/2, 180 + i*130));
-
-        buttons.forEach(btn => {
-            const bx = btn.x * bgCanvas.width, by = btn.y * bgCanvas.height;
-            bgCtx.fillStyle = btn.color;
-            bgCtx.globalAlpha = 0.8;
-            bgCtx.fillRect(bx, by, btn.w*bgCanvas.width, btn.h*bgCanvas.height);
-            bgCtx.fillStyle = "white";
-            bgCtx.font = "24px 標楷體";
-            bgCtx.fillText(btn.label, bx + (btn.w*bgCanvas.width)/2, by + (btn.h*bgCanvas.height)/2 + 10);
-        });
-    }
-
-    function onResults(results) {
-        drawUI();
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-            const tip = results.multiHandLandmarks[0][8];
-            const base = results.multiHandLandmarks[0][5];
-            const x = (1 - tip.x) * drawCanvas.width;
-            const y = tip.y * drawCanvas.height;
-
-            buttons.forEach(btn => {
-                if (x > btn.x*bgCanvas.width && x < (btn.x+btn.w)*bgCanvas.width &&
-                    y > btn.y*bgCanvas.height && y < (btn.y+btn.h)*bgCanvas.height) {
-                    if(!nextDebounce) btn.action();
-                }
-            });
-
-            if (tip.y < base.y) {
-                if (!isDrawing) { isDrawing = true; lastX = x; lastY = y; }
-                drawStroke(x, y);
-            } else { isDrawing = false; }
-        }
-    }
-
     function clearCanvas() { drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height); }
 
     function nextLevel() {
         nextDebounce = true;
-        stamp.classList.add('active'); // 顯示印章動畫
-        
+        stamp.classList.add('active');
         setTimeout(() => {
             stamp.classList.remove('active');
             currentLevel++;
@@ -225,7 +250,7 @@
             updateLevelDisplay();
             clearCanvas();
             nextDebounce = false;
-        }, 1500);
+        }, 1000);
     }
 
     function updateLevelDisplay() {
@@ -234,13 +259,6 @@
     }
 
     window.onload = init;
-    const hands = new Hands({ locateFile: (file) => `https://jsdelivr.net{file}` });
-    hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.7 });
-    hands.onResults(onResults);
-    new Camera(document.getElementById('input_video'), {
-        onFrame: async () => { await hands.send({image: document.getElementById('input_video')}); },
-        width: 1280, height: 720
-    }).start();
 </script>
 </body>
 </html>
