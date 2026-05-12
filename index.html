@@ -386,16 +386,18 @@ function onResults(results) {
         const thumb = landmarks[4];  // 拇指尖
         const mid   = landmarks[12]; // 中指尖
 
-        // MediaPipe 輸出的 x 已是鏡像後的值（自拍視角）
-        tipNX = tip.x;
+        // MediaPipe x 是未鏡像的原始值
+        // 畫面做了 ctx.scale(-1,1) 鏡像，骨架在翻轉 ctx 裡用原始 x 繪製會對齊
+        // 筆跡和按鈕碰撞在未翻轉空間，所以 x 要補償：(1 - tip.x)
+        tipNX = 1 - tip.x;  // 鏡像補償後的正規化 x
         tipNY = tip.y;
 
         const tipPX  = tipNX * W;
         const tipPY  = tipNY * H;
 
-        // 食指指尖高亮圈
+        // 食指指尖高亮圈（在鏡像 ctx 空間，用原始 tip.x 繪製才對齊骨架）
         ctx.beginPath();
-        ctx.arc(tipPX, tipPY, 20, 0, Math.PI * 2);
+        ctx.arc(tip.x * W, tipPY, 20, 0, Math.PI * 2);
         ctx.strokeStyle = '#ffeb3b';
         ctx.lineWidth   = 3;
         ctx.stroke();
