@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>空中書法闖關 - 宗師版</title>
+    <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
+    <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; background: #e8e4d9; font-family: "標楷體", "DFKai-SB", serif; overflow: hidden; }
+        #container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        canvas { position: absolute; transform: scaleX(-1); }
+        video { transform: scaleX(-1); display: none; }
+        
+        /* UI 層 */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        .hud { position: absolute; top: 20px; width: 100%; text-align: center; color: #3e3a31; }
+        .level-info { font-size: 32px; background: rgba(255,255,255,0.8); padding: 10px 30px; border-radius: 50px; border: 2px solid #8b4513; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
+        
+        /* 印章動畫樣式 */
+        #stamp { 
+            position: absolute; width: 120px; height: 120px; border: 4px solid #b22222; color: #b22222; 
+            font-size: 40px; display: flex; align-items: center; justify-content: center; 
+            font-weight: bold; opacity: 0; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s;
+            z-index: 15; right: 10%; bottom: 20%; transform: scale(2) rotate(-15deg);
+        }
+        #stamp.active { opacity: 0.8; transform: scale(1) rotate(-15deg); }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <video id="input_video"></video>
+    <canvas id="bg_canvas"></canvas>
+    <canvas id="draw_canvas" style="pointer-events: auto;"></canvas>
+    
+    <div id="ui-layer">
+        <div class="hud">
+            <span class="level-info">第 <span id="levelNum">1</span> 關：<span id="poemTitle">載入中</span></span>
+        </div>
+        <div id="stamp">御筆</div>
+    </div>
+</div>
+
+<!-- 音效 (使用開放來源) -->
+<audio id="bgm" loop src="https://soundhelix.com"></audio>
+
+<script>
+    const poems = [
+         // § 五言絕句
+  { title: "鹿柴", content: ["空山不見人", "但聞人語響", "返景入深林", "復照青苔上"] },
+  { title: "竹里館", content: ["獨坐幽篁裡", "彈琴復長嘯", "深林人不知", "明月來相照"] },
+  { title: "送別", content: ["山中相送罷", "日暮掩柴扉", "春草明年綠", "王孫歸不歸"] },
+  { title: "相思", content: ["紅豆生南國", "春來發幾枝", "願君多采擷", "此物最相思"] },
+  { title: "雜詩", content: ["君自故鄉來", "應知故鄉事", "來日綺窗前", "寒梅著花未"] },
+  { title: "宿建德江", content: ["移舟泊煙渚", "日暮客愁新", "野曠天低樹", "江清月近人"] },
+  { title: "春曉", content: ["春眠不覺曉", "處處聞啼鳥", "夜來風雨聲", "花落知多少"] },
+  { title: "夜思", content: ["床前明月光", "疑是地上霜", "舉頭望明月", "低頭思故鄉"] },
+  { title: "怨情", content: ["美人捲珠簾", "深坐蹙蛾眉", "但見淚痕濕", "不知心恨誰"] },
+  { title: "登鸛雀樓", content: ["白日依山盡", "黃河入海流", "欲窮千里目", "更上一層樓"] },
+  { title: "送靈澈", content: ["蒼蒼竹林寺", "杳杳鐘聲晚", "荷笠帶斜陽", "青山獨歸遠"] },
+  { title: "江雪", content: ["千山鳥飛絕", "萬徑人蹤滅", "孤舟簑笠翁", "獨釣寒江雪"] },
+  { title: "登樂遊原", content: ["向晚意不適", "驅車登古原", "夕陽無限好", "只是近黃昏"] },
+  { title: "尋隱者不遇", content: ["松下問童子", "言師採藥去", "只在此山中", "雲深不知處"] },
+  { title: "春怨", content: ["打起黃鶯兒", "莫教枝上啼", "啼時驚妾夢", "不得到遼西"] },
+
+  // § 五言古詩 (精選)
+  { title: "感遇四首之二", content: ["蘭葉春葳蕤", "桂華秋皎潔", "欣欣此生意", "自爾為佳節", "誰知林棲者", "聞風坐相悅", "草木有本心", "何求美人折"] },
+  { title: "月下獨酌", content: ["花間一壺酒", "獨酌無相親", "舉杯邀明月", "對影成三人", "月既不解飲", "影徒隨我身", "暫伴月將影", "行樂須及春", "我歌月徘徊", "我舞影零亂", "醒時同交歡", "醉後各分散", "永結無情遊", "相期邈雲漢"] },
+  { title: "望嶽", content: ["岱宗夫如何", "齊魯青未了", "造化鍾神秀", "陰陽割昏曉", "盪胸生層雲", "決眥入歸鳥", "會當凌絕頂", "一覽眾山小"] },
+  { title: "遊子吟", content: ["慈母手中線", "遊子身上衣", "臨行密密縫", "意恐遲遲歸", "誰言寸草心", "報得三春暉"] },
+   // § 七言絕句
+  { title: "回鄉偶書", content: ["少小離家老大回", "鄉音無改鬢毛摧", "兒童相見不相識", "笑問客從何處來"] },
+  { title: "九月九日憶山東兄弟", content: ["獨在異鄉為異客", "每逢佳節倍思親", "遙知兄弟登高處", "遍插茱萸少一人"] },
+  { title: "渭城曲", content: ["渭城朝雨浥輕塵", "客舍青青柳色新", "勸君更盡一杯酒", "西出陽關無故人"] },
+  { title: "芙蓉樓送辛漸", content: ["寒雨連江夜入吳", "平明送客楚山孤", "洛陽親友如相問", "一片冰心在玉壺"] },
+  { title: "出塞", content: ["秦時明月漢時關", "萬里長征人未還", "但使龍城飛將在", "不教胡馬渡陰山"] },
+  { title: "涼州詞", content: ["葡萄美酒夜光杯", "欲飲琵琶馬上催", "醉臥沙場君莫笑", "古來征戰幾人回"] },
+  { title: "送孟浩然之廣陵", content: ["故人西辭黃鶴樓", "煙花三月下揚州", "孤帆遠影碧空盡", "惟見長江天際流"] },
+  { title: "下江陵", content: ["朝辭白帝彩雲間", "千里江陵一日還", "兩岸猿聲啼不住", "輕舟已過萬重山"] },
+  { title: "楓橋夜泊", content: ["月落烏啼霜滿天", "江楓漁火對愁眠", "姑蘇城外寒山寺", "夜半鐘聲到客船"] },
+  { title: "烏衣巷", content: ["朱雀橋邊野草花", "烏衣巷口夕陽斜", "舊時王謝堂前燕", "飛入尋常百姓家"] },
+  { title: "赤壁", content: ["折戟沈沙鐵未銷", "自將磨洗認前朝", "東風不與周郎便", "銅雀春深鎖二喬"] },
+  { title: "泊秦淮", content: ["煙籠寒水月籠沙", "夜泊秦淮近酒家", "商女不知亡國恨", "隔江猶唱後庭花"] },
+  { title: "夜雨寄北", content: ["君問歸期未有期", "巴山夜雨漲秋池", "何當共剪西窗燭", "卻話巴山夜雨時"] },
+  { title: "金縷衣", content: ["勸君莫惜金縷衣", "勸君惜取少年時", "花開堪折直須折", "莫待無花空折枝"] },
+
+  // § 七言古詩 (名篇精選)
+  { title: "登幽州臺歌", content: ["前不見古人", "後不見來者", "念天地之悠悠", "獨愴然而涕下"] },
+  { title: "宣州謝朓樓餞別校書叔雲", content: ["棄我者昨日之日不可留", "亂我心者今日之日多煩憂", "長風萬里送秋雁", "對此可以酣高樓", "蓬萊文章建安骨", "中間小謝又清發", "俱懷逸興壯思飛", "欲上青天覽明月", "抽刀斷水水更流", "舉杯消愁愁更愁", "人生在世不稱意", "明朝散髮弄扁舟"] },
+  { title: "將進酒", content: ["君不見黃河之水天上來", "奔流到海不復回", "君不見高堂明鏡悲白髮", "朝如青絲暮成雪", "人生得意須盡歡", "莫使金樽空對月", "天生我材必有用", "千金散盡還復來", "烹羊宰牛且為樂", "會須一飲三百杯", "岑夫子", "丹丘生", "將進酒", "杯莫停", "與君歌一曲", "請君為我傾耳聽", "鐘鼓饌玉不足貴", "但願長醉不願醒", "古來聖賢皆寂寞", "惟有飲者留其名", "陳王昔時宴平樂", "斗酒十千恣讙謔", "主人何為言少錢", "徑須沽取對君酌", "五花馬", "千金裘", "呼兒將出換美酒", "與爾同銷萬古愁"] },
+   // § 五言律詩 (經典精選)
+  { title: "送杜少府之任蜀州", content: ["城闕輔三秦", "風煙望五津", "與君離別意", "同是宦遊人", "海內存知己", "天涯若比鄰", "無為在歧路", "兒女共沾巾"] },
+  { title: "在獄詠蟬", content: ["西陸蟬聲唱", "南冠客思深", "不堪玄鬢影", "來對白頭吟", "露重飛難進", "風多響易沈", "無人信高潔", "誰為表予心"] },
+  { title: "次北固山下", content: ["客路青山外", "行舟綠水前", "潮平兩岸闊", "風正一帆懸", "海日生殘夜", "江春入舊年", "鄉書何處達", "歸雁洛陽邊"] },
+  { title: "破山寺後禪院", content: ["清晨入古寺", "初日照高林", "曲徑通幽處", "禪房花木深", "山光悅鳥性", "潭影空人心", "萬籟此俱寂", "惟聞鐘磬音"] },
+  { title: "贈孟浩然", content: ["吾愛孟夫子", "風流天下聞", "紅顏棄軒冕", "白首臥松雲", "醉月頻中聖", "迷花不事君", "高山安可仰", "徒此挹清芬"] },
+  { title: "渡荊門送別", content: ["渡遠荊門外", "來從楚國遊", "山隨平野盡", "江入大荒流", "月下飛天鏡", "雲生結海樓", "仍憐故鄉水", "萬里送行舟"] },
+  { title: "送友人", content: ["青山橫北郭", "白水繞東城", "此地一為別", "孤蓬萬里征", "浮雲游子意", "落日故人情", "揮手自茲去", "蕭蕭班馬鳴"] },
+  { title: "春望", content: ["國破山河在", "城春草木深", "感時花濺淚", "恨別鳥驚心", "烽火連三月", "家書抵萬金", "白頭搔更短", "渾欲不勝簪"] },
+  { title: "月夜憶舍弟", content: ["戍鼓斷人行", "邊秋一雁聲", "露從今夜白", "月是故鄉明", "有弟皆分散", "無家問死生", "寄書長不達", "況乃未休兵"] },
+  { title: "旅夜書懷", content: ["細草微風岸", "危檣獨夜舟", "星垂平野闊", "月湧大江流", "名豈文章著", "官應老病休", "飄飄何所似", "天地一沙鷗"] },
+  { title: "登岳陽樓", content: ["昔聞洞庭水", "今上岳陽樓", "吳楚東南坼", "乾坤日夜浮", "親朋無一字", "老病有孤舟", "戎馬關山北", "憑軒涕泗流"] },
+  { title: "山居秋暝", content: ["空山新雨後", "天氣晚來秋", "明月松間照", "清泉石上流", "竹喧歸浣女", "蓮動下漁舟", "隨意春芳歇", "王孫自可留"] },
+  { title: "終南別業", content: ["中歲頗好道", "晚家南山陲", "興來每獨往", "勝事空自知", "行到水窮處", "坐看雲起時", "偶然值林叟", "談笑無還期"] },
+  { title: "過故人莊", content: ["故人具雞黍", "邀我至田家", "綠樹村邊合", "青山郭外斜", "開軒面場圃", "把酒話桑麻", "待到重陽日", "還來就菊花"] },
+  { title: "草", content: ["離離原上草", "一歲一枯榮", "野火燒不盡", "春風吹又生", "遠芳侵古道", "晴翠接荒城", "又送王孫去", "萋萋滿別情"] },
+  // § 七言律詩 (經典精選)
+  { title: "黃鶴樓", content: ["昔人已乘黃鶴去", "此地空餘黃鶴樓", "黃鶴一去不復返", "白雲千載空悠悠", "晴川歷歷漢陽樹", "芳草萋萋鸚鵡洲", "日暮鄉關何處是", "煙波江上使人愁"] },
+  { title: "登金陵鳳凰臺", content: ["鳳凰臺上鳳凰遊", "鳳去臺空江自流", "吳宮花草埋幽徑", "晉代衣冠成古丘", "三山半落青天外", "二水中分白鷺洲", "總為浮雲能蔽日", "長安不見使人愁"] },
+  { title: "蜀相", content: ["丞相祠堂何處尋", "錦官城外柏森森", "映階碧草自春色", "隔葉黃鸝空好音", "三顧頻煩天下計", "兩朝開濟老臣心", "出師未捷身先死", "長使英雄淚滿襟"] },
+  { title: "客至", content: ["舍南舍北皆春水", "但見群鷗日日來", "花徑不曾緣客掃", "蓬門今始為君開", "盤飧市遠無兼味", "樽酒家貧只舊醅", "肯與鄰翁相對飲", "隔籬呼取盡餘杯"] },
+  { title: "聞官軍收河南河北", content: ["劍外忽傳收薊北", "初聞涕淚滿衣裳", "卻看妻子愁何在", "漫卷詩書喜欲狂", "白日放歌須縱酒", "青春作伴好還鄉", "即從巴峽穿巫峽", "便下裝陽向洛陽"] },
+  { title: "登高", content: ["風急天高猿嘯哀", "渚清沙白鳥飛迴", "無邊落木蕭蕭下", "不盡長江滾滾來", "萬里悲秋常作客", "百年多病獨登臺", "艱難苦恨繁霜鬢", "潦倒新停濁酒杯"] },
+  { title: "錦瑟", content: ["錦瑟無端五十絃", "一絃一柱思華年", "莊生曉夢迷蝴蝶", "望帝春心託杜鵑", "滄海月明珠有淚", "藍田日暖玉生煙", "此情可待成追憶", "順是當時已惘然"] },
+  { title: "無題", content: ["相見時難別亦難", "東風無力百花殘", "春蠶到死絲方盡", "蠟炬成灰淚始乾", "曉鏡但愁雲鬢改", "夜吟應覺月光寒", "蓬萊此去無多路", "青鳥殷勤為探看"] },
+
+  // § 長篇樂府與古詩 (精選)
+  { title: "琵琶行", content: ["潯陽江頭夜送客", "楓葉荻花秋瑟瑟", "主人下馬客在船", "舉酒欲飲無管絃", "醉不成歡慘將別", "別時茫茫江浸月", "忽聞水上琵琶聲", "主人忘歸客不發", "尋聲暗問彈者誰", "琵琶聲停欲語遲", "移船相近邀相見", "添酒回燈重開宴", "千呼萬喚始出來", "猶抱琵琶半遮面", "轉軸撥絃三兩聲", "未成曲調先有情"] }, // 篇幅極長，僅列開頭
+  { title: "長恨歌", content: ["漢皇重色思傾國", "御宇多年求不得", "楊家有女初長成", "養在深閨人未識", "天生麗質難自棄", "一朝選在君王側", "回眸一笑百媚生", "六宮粉黛無顏色", "春寒賜浴華清池", "溫泉水滑洗凝脂", "侍兒扶起嬌無力", "始是新承恩澤時"] }, // 篇幅極長，僅列開頭
+  { title: "蜀道難", content: ["噫吁戲", "危乎高哉", "蜀道之難難於上青天", "蠶叢及魚鳧", "開國何茫然", "爾來四萬八千歲", "不與秦塞通人煙", "西當太白有鳥道", "可以橫絕峨嵋巔", "地崩山摧壯士死", "然後天梯石棧方鉤連"] }
+
+    ];
+
+    let currentLevel = parseInt(localStorage.getItem('calligraphyLevel')) || 0;
+    const bgCanvas = document.getElementById('bg_canvas');
+    const drawCanvas = document.getElementById('draw_canvas');
+    const bgCtx = bgCanvas.getContext('2d');
+    const drawCtx = drawCanvas.getContext('2d');
+    const stamp = document.getElementById('stamp');
+    const bgm = document.getElementById('bgm');
+
+    let lastX = 0, lastY = 0, isDrawing = false, isMouseActive = false;
+    let nextDebounce = false; // 防止連續觸發下一關
+
+    const buttons = [
+        { label: '清空', x: 0.08, y: 0.85, w: 0.1, h: 0.07, color: '#8b4513', action: clearCanvas },
+        { label: '蓋章前進', x: 0.82, y: 0.85, w: 0.12, h: 0.07, color: '#b22222', action: nextLevel }
+    ];
+
+    function init() {
+        bgCanvas.width = drawCanvas.width = window.innerWidth;
+        bgCanvas.height = drawCanvas.height = window.innerHeight;
+        drawCtx.lineCap = 'round';
+        drawCtx.strokeStyle = 'rgba(20,20,20,0.9)';
+        drawCtx.shadowBlur = 3;
+        drawCtx.shadowColor = 'black';
+        updateLevelDisplay();
+        
+        // 第一次點擊啟動音樂 (因瀏覽器策略)
+        window.onclick = () => { if(bgm.paused) bgm.play(); };
+    }
+
+    // 書寫邏輯 (手指+滑鼠共通)
+    function drawStroke(x, y) {
+        const dist = Math.hypot(x - lastX, y - lastY);
+        drawCtx.lineWidth = Math.max(4, 18 - dist * 0.7);
+        drawCtx.beginPath();
+        drawCtx.moveTo(lastX, lastY);
+        drawCtx.lineTo(x, y);
+        drawCtx.stroke();
+        lastX = x; lastY = y;
+    }
+
+    // 滑鼠事件
+    drawCanvas.onmousedown = (e) => { isMouseActive = true; lastX = drawCanvas.width - e.clientX; lastY = e.clientY; };
+    drawCanvas.onmousemove = (e) => { if(isMouseActive) drawStroke(drawCanvas.width - e.clientX, e.clientY); };
+    window.onmouseup = () => isMouseActive = false;
+
+    function drawUI() {
+        bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+        bgCtx.save();
+        bgCtx.globalAlpha = 0.35;
+        bgCtx.drawImage(document.getElementById('input_video'), 0, 0, bgCanvas.width, bgCanvas.height);
+        bgCtx.restore();
+
+        const p = poems[currentLevel % poems.length];
+        bgCtx.textAlign = "center";
+        bgCtx.fillStyle = "rgba(0,0,0,0.1)";
+        bgCtx.font = "bold 80px 標楷體";
+        p.content.forEach((line, i) => bgCtx.fillText(line, bgCanvas.width/2, 180 + i*130));
+
+        buttons.forEach(btn => {
+            const bx = btn.x * bgCanvas.width, by = btn.y * bgCanvas.height;
+            bgCtx.fillStyle = btn.color;
+            bgCtx.globalAlpha = 0.8;
+            bgCtx.fillRect(bx, by, btn.w*bgCanvas.width, btn.h*bgCanvas.height);
+            bgCtx.fillStyle = "white";
+            bgCtx.font = "24px 標楷體";
+            bgCtx.fillText(btn.label, bx + (btn.w*bgCanvas.width)/2, by + (btn.h*bgCanvas.height)/2 + 10);
+        });
+    }
+
+    function onResults(results) {
+        drawUI();
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const tip = results.multiHandLandmarks[0][8];
+            const base = results.multiHandLandmarks[0][5];
+            const x = (1 - tip.x) * drawCanvas.width;
+            const y = tip.y * drawCanvas.height;
+
+            buttons.forEach(btn => {
+                if (x > btn.x*bgCanvas.width && x < (btn.x+btn.w)*bgCanvas.width &&
+                    y > btn.y*bgCanvas.height && y < (btn.y+btn.h)*bgCanvas.height) {
+                    if(!nextDebounce) btn.action();
+                }
+            });
+
+            if (tip.y < base.y) {
+                if (!isDrawing) { isDrawing = true; lastX = x; lastY = y; }
+                drawStroke(x, y);
+            } else { isDrawing = false; }
+        }
+    }
+
+    function clearCanvas() { drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height); }
+
+    function nextLevel() {
+        nextDebounce = true;
+        stamp.classList.add('active'); // 顯示印章動畫
+        
+        setTimeout(() => {
+            stamp.classList.remove('active');
+            currentLevel++;
+            localStorage.setItem('calligraphyLevel', currentLevel);
+            updateLevelDisplay();
+            clearCanvas();
+            nextDebounce = false;
+        }, 1500);
+    }
+
+    function updateLevelDisplay() {
+        document.getElementById('levelNum').innerText = currentLevel + 1;
+        document.getElementById('poemTitle').innerText = poems[currentLevel % poems.length].title;
+    }
+
+    window.onload = init;
+    const hands = new Hands({ locateFile: (file) => `https://jsdelivr.net{file}` });
+    hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.7 });
+    hands.onResults(onResults);
+    new Camera(document.getElementById('input_video'), {
+        onFrame: async () => { await hands.send({image: document.getElementById('input_video')}); },
+        width: 1280, height: 720
+    }).start();
+</script>
+</body>
+</html>
